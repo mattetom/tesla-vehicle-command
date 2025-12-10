@@ -11,21 +11,25 @@ COPY . .
 RUN mkdir build
 RUN go build -o ./build/tesla-http-proxy ./cmd/tesla-http-proxy
 
-# Copy entrypoint here (IN BUILD STAGE) and make it executable
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-
 # ---- Runtime stage ----
-FROM gcr.io/distroless/base-debian12:nonroot AS runtime
+FROM debian:bookworm-slim AS runtime
+
+# Install minimal dependencies (ca-certificates)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy binary
+# Copy binary from build stage
 COPY --from=build /app/build/tesla-http-proxy /usr/local/bin/tesla-http-proxy
 
-# Copy entrypoint ALREADY EXECUTABLE
-COPY --from=build /entrypoint.sh /entrypoint.sh
+# Copy entrypoint script and make executable
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-USER nonroot
+# Non-root user for security
+RUN useradd -m appuser
+USER appuser
+
 ENTRYPOINT ["/entrypoint.sh"]

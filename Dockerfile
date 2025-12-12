@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM golang:1.23.0 AS build
+FROM golang:1.23.0 AS builder
 
 WORKDIR /app
 
@@ -8,28 +8,18 @@ RUN go mod download
 
 COPY . .
 
-RUN mkdir build
-RUN go build -o ./build/tesla-http-proxy ./cmd/tesla-http-proxy
+# Build proxy binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -o /tesla-http-proxy ./cmd/tesla-http-proxy
+
 
 # ---- Runtime stage ----
-FROM debian:bookworm-slim AS runtime
+FROM gcr.io/distroless/base-debian12:nonroot
 
-# Install minimal dependencies (ca-certificates)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+WORKDIR /
 
-WORKDIR /app
+# Copy binary
+COPY --from=builder /tesla-http-proxy /usr/local/bin/tesla-http-proxy
 
-# Copy binary from build stage
-COPY --from=build /app/build/tesla-http-proxy /usr/local/bin/tesla-http-proxy
-
-# Copy entrypoint script and make executable
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Non-root user for security
-RUN useradd -m appuser
-USER appuser
-
-ENTRYPOINT ["/entrypoint.sh"]
+# No /data needed anymore
+ENTRYPOINT ["/usr/local/bin/tesla-http-proxy"]

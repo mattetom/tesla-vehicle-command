@@ -14,6 +14,7 @@ import (
 	"github.com/teslamotors/vehicle-command/pkg/cli"
 	"github.com/teslamotors/vehicle-command/pkg/protocol"
 	"github.com/teslamotors/vehicle-command/pkg/proxy"
+	"encoding/base64"
 )
 
 const (
@@ -68,6 +69,28 @@ func Usage() {
 	flag.PrintDefaults()
 }
 
+// decodeSecretFile loads a base64 env var and writes it to a file.
+// If the env var does not exist, it does nothing.
+func decodeSecretFile(envVar string, path string) error {
+
+    b64 := os.Getenv(envVar)
+    if b64 == "" {
+        return nil
+    }
+
+    data, err := base64.StdEncoding.DecodeString(b64)
+    if err != nil {
+        return fmt.Errorf("failed to decode %s: %w", envVar, err)
+    }
+
+    err = os.WriteFile(path, data, 0600)
+    if err != nil {
+        return fmt.Errorf("failed to write %s: %w", path, err)
+    }
+
+    return nil
+}
+
 func main() {
 	// ******************************************************************************************
 	// WHY IS THERE NO OPTION FOR DISABLING TLS?
@@ -80,9 +103,46 @@ func main() {
 	// Expert users who need to disable TLS can do so without forking this repository by using the
 	// pkg/proxy package, which is agnostic to TLS. This application is a very thin wrapper around
 	// that package.
+    // --- Decode fly.io secrets into files ---
+	out := flag.CommandLine.Output()
+	fmt.Fprintf(out, "Starting tesla-http-proxy...")
+	
+    os.Mkdir("/data", 0700)
+
+    // TLS cert
+    if err := decodeSecretFile(EnvTLSCert, "/tmp/tls-cert.pem"); err != nil {
+        fmt.Fprintf(os.Stderr, "%v\n", err)
+        os.Exit(1)
+    }
+	fmt.Fprintf(out, "decoded tls cert")
+    
+	// TLS key
+    if err := decodeSecretFile(EnvTLSKey, "/tmp/tls-key.pem"); err != nil {
+        fmt.Fprintf(os.Stderr, "%v\n", err)
+        os.Exit(1)
+    }
+	fmt.Fprintf(out, "decoded tls key")
+
+    // Vehicle private key (fleet key)
+    if err := decodeSecretFile("TESLA_KEY_FILE", "/tmp/fleet-key.pem"); err != nil {
+        fmt.Fprintf(os.Stderr, "%v\n", err)
+        os.Exit(1)
+    }
+	fmt.Fprintf(out, "decoded fleet key")
+
+    // Override environment variables so the proxy uses our decoded files
+    os.Setenv(EnvTLSCert, "/tmp/tls-cert.pem")
+    os.Setenv(EnvTLSKey, "/tmp/tls-key.pem")
+    os.Setenv("TESLA_KEY_FILE", "/tmp/fleet-key.pem")
+	fmt.Fprintf(out, "environment configured")
+
+	// Force CLI to use file-based keyring instead of system keyrings
+	os.Setenv("TESLA_KEYRING_TYPE", "file")
+	os.Setenv("TESLA_KEY_FILE", "/tmp/fleet-key.pem")
+	fmt.Fprintf(out, "keyring configured")
 
 	config, err := cli.NewConfig(cli.FlagPrivateKey)
-
+	fmt.Fprintf(out, "loaded cli config")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load credential configuration: %s\n", err)
 		os.Exit(1)
@@ -97,25 +157,31 @@ func main() {
 
 	flag.Usage = Usage
 	config.RegisterCommandLineFlags()
+	// Force -key-file flag so cli.NewConfig loads the correct file
+	os.Args = append(os.Args, "-key-file", "/tmp/fleet-key.pem")
 	flag.Parse()
+	fmt.Fprintf(out, "parsed flags")
 	err = readFromEnvironment()
+	fmt.Fprintf(out, "read environment")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading environment: %s\n", err)
 		os.Exit(1)
 	}
 	config.ReadFromEnvironment()
-
+	fmt.Fprintf(out, "configured from environment")
 	if httpConfig.verbose {
 		log.SetLevel(log.LevelDebug)
 	}
 
-	if httpConfig.host != "localhost" {
-		fmt.Fprintln(os.Stderr, nonLocalhostWarning)
-	}
+	// if httpConfig.host != "localhost" {
+	// 	fmt.Fprintln(os.Stderr, nonLocalhostWarning)
+	// }
 
 	var skey protocol.ECDHPrivateKey
 	skey, err = config.PrivateKey()
+	fmt.Fprintf(out, "loaded private key")
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring private key: %s\n", err)
 		return
 	}
 
@@ -133,6 +199,7 @@ func main() {
 	}
 
 	log.Debug("Creating proxy")
+	fmt.Fprintf(out, "creating proxy")
 	p, err := proxy.New(context.Background(), skey, cacheSize)
 	if err != nil {
 		log.Error("Error initializing proxy service: %v", err)
@@ -141,13 +208,17 @@ func main() {
 	p.Timeout = httpConfig.timeout
 	addr := fmt.Sprintf("%s:%d", httpConfig.host, httpConfig.port)
 	log.Info("Listening on %s", addr)
+	fmt.Fprintf(out, "listening on %s", addr)
 
 	// To add more application logic requests, such as alternative client authentication, create
 	// a http.HandleFunc implementation (https://pkg.go.dev/net/http#HandlerFunc). The ServeHTTP
 	// method of your implementation can perform your business logic and then, if the request is
 	// authorized, invoke p.ServeHTTP. Finally, replace p in the below ListenAndServeTLS call with
 	// an object of your newly created type.
-	log.Error("Server stopped: %s", http.ListenAndServeTLS(addr, httpConfig.certFilename, httpConfig.keyFilename, p))
+	err = http.ListenAndServeTLS(addr, httpConfig.certFilename, httpConfig.keyFilename, p)
+	fmt.Fprintf(os.Stderr, "TLS SERVER ERROR: %v\n", err)
+	fmt.Fprintf(out, "server stopped\n")
+
 }
 
 // readConfig applies configuration from environment variables.

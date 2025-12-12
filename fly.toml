@@ -1,26 +1,26 @@
 app = "tesla-vehicle-command"
+
 primary_region = "ams"
 
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
 [build]
-
-[http_service]
-  internal_port = 443
-  force_https = false      # Perché stai usando il tuo certificato TLS, non quello di Fly
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ["app"]
-
-  [[http_service.ports]]
-    port = 443
-    handlers = ["tls"]
-
-[checks]
-  [checks.proxy]
-    type = "tcp"
-    port = 443
-    interval = "15s"
-    timeout = "2s"
+  dockerfile = "Dockerfile"
 
 [env]
-  CONFIG_PATH = "/app/config"
+  TESLA_HTTP_PROXY_HOST = "0.0.0.0"
+  TESLA_HTTP_PROXY_PORT = "8443"
+
+# ---- HTTP/TLS Service ----
+[[services]]
+  internal_port = 8443        # <-- Porta interna del container
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 443                # <-- Porta pubblica
+    handlers = ["tls"]        # TLS terminato da Fly
+
+  [[services.tcp_checks]]
+    interval = "10s"
+    timeout = "2s"

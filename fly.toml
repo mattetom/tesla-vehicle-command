@@ -1,5 +1,4 @@
 app = "tesla-vehicle-command"
-
 primary_region = "ams"
 
 kill_signal = "SIGINT"
@@ -12,14 +11,13 @@ kill_timeout = "5s"
   TESLA_HTTP_PROXY_HOST = "0.0.0.0"
   TESLA_HTTP_PROXY_PORT = "8443"
 
-# ---- HTTP/TLS Service ----
 [[services]]
-  internal_port = 8443        # <-- Porta interna del container
+  internal_port = 8443
   protocol = "tcp"
 
   [[services.ports]]
-    port = 443                # <-- Porta pubblica
-    handlers = ["tls"]        # TLS terminato da Fly
+    port = 443
+    handlers = []       # <-- IMPORTANTISSIMO: niente TLS su Fly, passa tutto al container
 
   [[services.tcp_checks]]
     interval = "10s"
